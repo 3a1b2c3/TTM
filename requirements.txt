@@ -1,0 +1,18 @@
+# Time-to-Move (TTM) runtime dependencies
+# Install torch separately with CUDA wheel (see setup_env.ps1) before this file.
+diffusers>=0.32.0
+transformers>=4.46.0
+accelerate>=1.0.0
+numpy>=1.26
+opencv-python>=4.10
+imageio>=2.34
+imageio-ffmpeg>=0.5
+Pillow>=10.0
+ftfy>=6.2
+sentencepiece>=0.2
+protobuf>=4.0
+huggingface_hub>=0.25
+hf_transfer>=0.1.8
+safetensors>=0.4.5
+einops>=0.8
+tqdm>=4.66
