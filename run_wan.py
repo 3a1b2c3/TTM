@@ -18,7 +18,7 @@ except ImportError as e:
     raise ImportError(f"Required module not found: {e}. Please install it before running this script. "
                      f"For installation instructions, see: https://github.com/Wan-Video/Wan2.2")
 
-MODEL_ID = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+MODEL_ID = "lopho/Wan2.2-I2V-A14B-Diffusers_nf4"
 DTYPE = torch.bfloat16
 
 

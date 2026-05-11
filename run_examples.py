@@ -8,6 +8,7 @@ Usage:
     python run_examples.py --only Monkey Birds    # only matching example names
     python run_examples.py --model wan            # only wan examples
     python run_examples.py --tweak-index 4 --tstrong-index 9   # override indices
+    python run_examples.py --start-index 5        # skip the first 5 examples (resume)
     python run_examples.py --dry-run              # print commands without executing
 """
 
@@ -46,12 +47,38 @@ DEFAULTS = {
 SCRIPTS = {"wan": "run_wan.py", "cog": "run_cog.py", "svd": "run_svd.py"}
 
 MODEL_IDS = {
-    "wan": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+    "wan": "lopho/Wan2.2-I2V-A14B-Diffusers_nf4",
     "cog": "THUDM/CogVideoX-5b-I2V",
     "svd": "stabilityai/stable-video-diffusion-img2vid-xt",
 }
 
 CLIP_FRAMES = {"wan": 81, "cog": 49, "svd": 21}
+
+
+def write_example_stats(name: str, model: str, elapsed: float, rc: int, *,
+                        tweak: int | None = None, tstrong: int | None = None,
+                        output: Path | None = None) -> Path:
+    """Write a one-example stats file alongside the per-example output mp4."""
+    frames = CLIP_FRAMES.get(model, 0)
+    fps = (frames / elapsed) if rc == 0 and elapsed > 0 and frames else 0.0
+    status = "OK" if rc == 0 else f"ERR{rc}"
+    path = OUTPUTS / f"{model}_{name}_stats.txt"
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(f"name: {name}\n")
+        f.write(f"model: {model}\n")
+        if tweak is not None:
+            f.write(f"tweak_index: {tweak}\n")
+        if tstrong is not None:
+            f.write(f"tstrong_index: {tstrong}\n")
+        if output is not None:
+            f.write(f"output: {output}\n")
+        f.write(f"frames: {frames}\n")
+        f.write(f"elapsed_s: {elapsed:.3f}\n")
+        f.write(f"elapsed_min: {elapsed/60:.3f}\n")
+        f.write(f"fps: {fps:.3f}\n")
+        f.write(f"status: {status}\n")
+        f.write(f"rc: {rc}\n")
+    return path
 
 
 def model_for(example_name: str):
@@ -192,6 +219,11 @@ def run_wan_batch(example_dirs: list[Path], args, python_exe: Path):
             print(f"    {name}: {elapsed:.1f}s ({elapsed/60:.2f} min)  fps: {fps:.3f}")
         else:
             print(f"    {name}: {elapsed:.1f}s  FAILED (rc={rc})")
+        stats_path = write_example_stats(
+            name, "wan", elapsed, rc,
+            tweak=e["tweak"], tstrong=e["tstrong"], output=Path(e["output"]),
+        )
+        print(f"    stats: {stats_path}")
         out.append((name, elapsed, rc))
     return out
 
@@ -233,6 +265,10 @@ def run_one(example_dir: Path, args, python_exe: Path):
         print(f"    elapsed: {elapsed:.1f}s ({elapsed/60:.2f} min)  fps: {fps:.3f} ({CLIP_FRAMES[model]} frames)")
     else:
         print(f"    elapsed: {elapsed:.1f}s ({elapsed/60:.2f} min)  FAILED (exit {rc}) — fps not reported")
+    stats_path = write_example_stats(
+        name, model, elapsed, rc, tweak=tweak, tstrong=tstrong, output=output,
+    )
+    print(f"    stats: {stats_path}")
     return rc, elapsed, model
 
 
@@ -245,6 +281,7 @@ def main():
     parser.add_argument("--tstrong-index", type=int, help="Override default tstrong-index")
     parser.add_argument("--dry-run", action="store_true", help="Print commands without executing")
     parser.add_argument("--no-prefetch", action="store_true", help="Skip pre-downloading model weights")
+    parser.add_argument("--start-index", type=int, default=0, help="Skip examples before this 0-based index (after --only filter, in sorted order)")
     args = parser.parse_args()
 
     python_exe = VENV_PY if VENV_PY.exists() else Path(sys.executable)
@@ -263,6 +300,14 @@ def main():
     if not examples:
         print("No examples matched.", file=sys.stderr)
         return 1
+
+    if args.start_index:
+        if args.start_index >= len(examples):
+            print(f"--start-index {args.start_index} is past the last example (have {len(examples)}).", file=sys.stderr)
+            return 1
+        skipped = [p.name for p in examples[:args.start_index]]
+        print(f"Skipping {len(skipped)} example(s) before index {args.start_index}: {', '.join(skipped)}")
+        examples = examples[args.start_index:]
 
     if not args.no_prefetch:
         needed_models = set()
