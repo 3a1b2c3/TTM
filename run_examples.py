@@ -38,21 +38,33 @@ EXAMPLES = REPO / "examples"
 OUTPUTS = REPO / "outputs"
 
 DEFAULTS = {
-    "wan_cutdrag":    {"tweak": 3,  "tstrong": 7},
+    "wan_cutdrag":    {"tweak": 8,  "tstrong": 12},
     "wan_camcontrol": {"tweak": 2,  "tstrong": 5},
+    "wan21":          {"tweak": 0,  "tstrong": 0},
     "cog":            {"tweak": 4,  "tstrong": 9},
     "svd":            {"tweak": 16, "tstrong": 21},
 }
 
-SCRIPTS = {"wan": "run_wan.py", "cog": "run_cog.py", "svd": "run_svd.py"}
+SCRIPTS = {"wan": "run_wan.py", "wan21": "run_wan21.py", "cog": "run_cog.py", "svd": "run_svd.py"}
 
 MODEL_IDS = {
     "wan": "lopho/Wan2.2-I2V-A14B-Diffusers_nf4",
+    "wan21": "Wan-AI/Wan2.1-T2V-1.3B",
     "cog": "THUDM/CogVideoX-5b-I2V",
     "svd": "stabilityai/stable-video-diffusion-img2vid-xt",
 }
 
-CLIP_FRAMES = {"wan": 81, "cog": 49, "svd": 21}
+# Extra repos to prefetch alongside the main MODEL_IDS entry for a given model.
+# Wan uses the broken `_nf4` repo as the pipeline shell but pulls the actual I2V
+# transformer weights from these two split repos (which have the correct in_channels=36).
+EXTRA_PREFETCH_REPOS = {
+    "wan": [
+        "lopho/Wan2.2-I2V-A14B-Diffusers_nf4_transformer",
+        "lopho/Wan2.2-I2V-A14B-Diffusers_nf4_transformer_2",
+    ],
+}
+
+CLIP_FRAMES = {"wan": 81, "wan21": 81, "cog": 49, "svd": 21}
 
 
 def write_example_stats(name: str, model: str, elapsed: float, rc: int, *,
@@ -82,8 +94,14 @@ def write_example_stats(name: str, model: str, elapsed: float, rc: int, *,
 
 
 def model_for(example_name: str):
-    if example_name.startswith("camcontrol_") or example_name.startswith("cutdrag_wan_"):
+    if (
+        example_name.startswith("camcontrol_")
+        or example_name.startswith("cutdrag_wan_")
+        or example_name.startswith("C2R")
+    ):
         return "wan"
+    if example_name.startswith("wan21_"):
+        return "wan21"
     if example_name.startswith("cutdrag_cog_"):
         return "cog"
     if example_name.startswith("cutdrag_svd_"):
@@ -104,38 +122,45 @@ def category_for(example_name: str) -> str:
 def prefetch_models(models: set[str], dry_run: bool, max_attempts: int = 8):
     if not models:
         return
-    print(f"\nPre-downloading {len(models)} model(s): {', '.join(sorted(models))}")
+    repos_per_model = {
+        m: [MODEL_IDS[m]] + EXTRA_PREFETCH_REPOS.get(m, [])
+        for m in sorted(models)
+    }
+    total_repos = sum(len(v) for v in repos_per_model.values())
+    print(f"\nPre-downloading {len(models)} model(s) across {total_repos} repo(s): "
+          + ", ".join(f"{m}={'+'.join(r)}" for m, r in repos_per_model.items()))
     if dry_run:
-        for m in sorted(models):
-            print(f"    [dry-run] would download {MODEL_IDS[m]}")
+        for m, repos in repos_per_model.items():
+            for r in repos:
+                print(f"    [dry-run] would download {r}")
         return
     from huggingface_hub import HfApi, hf_hub_download
     api = HfApi()
-    for m in sorted(models):
-        repo_id = MODEL_IDS[m]
-        print(f"  -> {m}: {repo_id}")
-        info = api.model_info(repo_id, files_metadata=True)
-        siblings = [(s.rfilename, s.size or 0) for s in info.siblings]
-        total_bytes = sum(sz for _, sz in siblings)
-        print(f"     {len(siblings)} files, {total_bytes/1e9:.1f} GB total")
-        done_bytes = 0
-        for i, (fname, sz) in enumerate(siblings, 1):
-            print(f"     [{i}/{len(siblings)}] {fname}  ({sz/1e6:.1f} MB)  cumulative {done_bytes/1e9:.1f}/{total_bytes/1e9:.1f} GB", flush=True)
-            for attempt in range(1, max_attempts + 1):
-                start = time.perf_counter()
-                try:
-                    hf_hub_download(repo_id=repo_id, filename=fname)
-                    el = time.perf_counter() - start
-                    rate = (sz / 1e6 / el) if el > 0 and sz > 0 else 0.0
-                    print(f"          ok in {el:.1f}s ({rate:.1f} MB/s)", flush=True)
-                    done_bytes += sz
-                    break
-                except Exception as e:
-                    el = time.perf_counter() - start
-                    print(f"          attempt {attempt}/{max_attempts} failed after {el:.1f}s: {type(e).__name__}: {e}", flush=True)
-                    if attempt == max_attempts:
-                        raise
-                    time.sleep(min(2 ** attempt, 30))
+    for m, repos in repos_per_model.items():
+        for repo_id in repos:
+            print(f"  -> {m}: {repo_id}")
+            info = api.model_info(repo_id, files_metadata=True)
+            siblings = [(s.rfilename, s.size or 0) for s in info.siblings]
+            total_bytes = sum(sz for _, sz in siblings)
+            print(f"     {len(siblings)} files, {total_bytes/1e9:.1f} GB total")
+            done_bytes = 0
+            for i, (fname, sz) in enumerate(siblings, 1):
+                print(f"     [{i}/{len(siblings)}] {fname}  ({sz/1e6:.1f} MB)  cumulative {done_bytes/1e9:.1f}/{total_bytes/1e9:.1f} GB", flush=True)
+                for attempt in range(1, max_attempts + 1):
+                    start = time.perf_counter()
+                    try:
+                        hf_hub_download(repo_id=repo_id, filename=fname)
+                        el = time.perf_counter() - start
+                        rate = (sz / 1e6 / el) if el > 0 and sz > 0 else 0.0
+                        print(f"          ok in {el:.1f}s ({rate:.1f} MB/s)", flush=True)
+                        done_bytes += sz
+                        break
+                    except Exception as e:
+                        el = time.perf_counter() - start
+                        print(f"          attempt {attempt}/{max_attempts} failed after {el:.1f}s: {type(e).__name__}: {e}", flush=True)
+                        if attempt == max_attempts:
+                            raise
+                        time.sleep(min(2 ** attempt, 30))
 
 
 def run_wan_batch(example_dirs: list[Path], args, python_exe: Path):
@@ -274,8 +299,8 @@ def run_one(example_dir: Path, args, python_exe: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Run TTM examples")
-    parser.add_argument("--model", choices=["wan", "cog", "svd"], help="Limit to one model")
-    parser.add_argument("--skip", nargs="*", choices=["wan", "cog", "svd"], default=["cog", "svd"], help="Skip these models (examples + downloads). Default skips cog and svd; pass --skip with no args to skip nothing.")
+    parser.add_argument("--model", choices=["wan", "wan21", "cog", "svd"], help="Limit to one model")
+    parser.add_argument("--skip", nargs="*", choices=["wan", "wan21", "cog", "svd"], default=["cog", "svd"], help="Skip these models (examples + downloads). Default skips cog and svd; pass --skip with no args to skip nothing.")
     parser.add_argument("--only", nargs="+", help="Only run examples whose name contains any of these substrings")
     parser.add_argument("--tweak-index", type=int, help="Override default tweak-index")
     parser.add_argument("--tstrong-index", type=int, help="Override default tstrong-index")
@@ -292,7 +317,7 @@ def main():
 
     examples = sorted(
         (p for p in EXAMPLES.iterdir() if p.is_dir()),
-        key=lambda p: (p.name.startswith("camcontrol_"), p.name),
+        key=lambda p: (p.name != "C2R_gui", not p.name.startswith("C2R"), p.name.startswith("camcontrol_"), p.name),
     )
     if args.only:
         examples = [p for p in examples if any(s.lower() in p.name.lower() for s in args.only)]

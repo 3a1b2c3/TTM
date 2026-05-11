@@ -19,6 +19,8 @@ except ImportError as e:
                      f"For installation instructions, see: https://github.com/Wan-Video/Wan2.2")
 
 MODEL_ID = "lopho/Wan2.2-I2V-A14B-Diffusers_nf4"
+TRANSFORMER_REPO = "lopho/Wan2.2-I2V-A14B-Diffusers_nf4_transformer"
+TRANSFORMER_2_REPO = "lopho/Wan2.2-I2V-A14B-Diffusers_nf4_transformer_2"
 DTYPE = torch.bfloat16
 
 
@@ -61,62 +63,42 @@ def parse_args():
 
 def setup_wan_pipeline(model_id: str, dtype: torch.dtype, device: str):
     t0 = time.perf_counter()
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=dtype,
-    )
-
     print(f"[setup] mem at start | {_gpu_mem()}", flush=True)
-    print(f"[setup] quant config: load_in_4bit=True nf4 compute_dtype={dtype}", flush=True)
+    print(f"[setup] using pre-quantized nf4 I2V transformers (no runtime conversion)", flush=True)
 
     t_t1 = time.perf_counter()
-    print(f"[setup] loading transformer (nf4) from {model_id}/transformer ...", flush=True)
+    print(f"[setup] loading transformer (pre-quantized nf4) from {TRANSFORMER_REPO} ...", flush=True)
     transformer = WanTransformer3DModel.from_pretrained(
-        model_id,
-        subfolder="transformer",
-        quantization_config=quant_config,
+        TRANSFORMER_REPO,
         torch_dtype=dtype,
-        local_files_only=True,
     )
     print(f"[setup] transformer loaded in {time.perf_counter()-t_t1:.1f}s | {_gpu_mem()}", flush=True)
 
     t_t2 = time.perf_counter()
-    print(f"[setup] loading transformer_2 (nf4) from {model_id}/transformer_2 ...", flush=True)
+    print(f"[setup] loading transformer_2 (pre-quantized nf4) from {TRANSFORMER_2_REPO} ...", flush=True)
     transformer_2 = WanTransformer3DModel.from_pretrained(
-        model_id,
-        subfolder="transformer_2",
-        quantization_config=quant_config,
+        TRANSFORMER_2_REPO,
         torch_dtype=dtype,
-        local_files_only=True,
     )
     print(f"[setup] transformer_2 loaded in {time.perf_counter()-t_t2:.1f}s | {_gpu_mem()}", flush=True)
 
     t_te = time.perf_counter()
-    print(f"[setup] loading text_encoder (nf4 UMT5) from {model_id}/text_encoder ...", flush=True)
-    te_quant_config = TransformersBnbConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=dtype,
-    )
+    print(f"[setup] loading text_encoder (pre-quantized nf4 UMT5) from {model_id}/text_encoder ...", flush=True)
     text_encoder = UMT5EncoderModel.from_pretrained(
         model_id,
         subfolder="text_encoder",
-        quantization_config=te_quant_config,
         torch_dtype=dtype,
-        local_files_only=True,
     )
     print(f"[setup] text_encoder loaded in {time.perf_counter()-t_te:.1f}s | {_gpu_mem()}", flush=True)
 
     t_p = time.perf_counter()
-    print(f"[setup] from_pretrained({model_id}) — pipeline assembly with prequantized components ...", flush=True)
+    print(f"[setup] from_pretrained({model_id}) — pipeline assembly with prequantized components (transformer/transformer_2 overridden) ...", flush=True)
     pipe = WanImageToVideoTTMPipeline.from_pretrained(
         model_id,
         transformer=transformer,
         transformer_2=transformer_2,
         text_encoder=text_encoder,
         torch_dtype=dtype,
-        local_files_only=True,
     )
     print(f"[setup] from_pretrained done in {time.perf_counter()-t_p:.1f}s | {_gpu_mem()}", flush=True)
 
