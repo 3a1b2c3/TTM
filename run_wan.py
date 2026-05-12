@@ -146,9 +146,11 @@ def run_one(pipe, args, input_path: str, output_path: str, tweak_index: int, tst
     image = image.resize((width, height))
     print(f"{tag} image loaded ({image.width}x{image.height}) in {time.perf_counter()-t_img:.2f}s", flush=True)
 
-    with open(prompt_path, "r", encoding="utf-8") as f:
-        prompt = f.read().strip()
-    print(f"{tag} prompt loaded ({len(prompt)} chars): {prompt[:80]}{'...' if len(prompt) > 80 else ''}", flush=True)
+    prompt = ""
+    if os.path.exists(prompt_path):
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt = f.read().strip()
+    print(f"{tag} prompt loaded ({len(prompt)} chars): {prompt[:80] if prompt else '<empty>'}{'...' if len(prompt) > 80 else ''}", flush=True)
 
     gen_device = args.device if args.device.startswith("cuda") else "cpu"
     generator = torch.Generator(device=gen_device).manual_seed(args.seed)

@@ -41,15 +41,17 @@ DEFAULTS = {
     "wan_cutdrag":    {"tweak": 8,  "tstrong": 12},
     "wan_camcontrol": {"tweak": 2,  "tstrong": 5},
     "wan21":          {"tweak": 0,  "tstrong": 0},
+    "ti2v5b":         {"tweak": 0,  "tstrong": 0},
     "cog":            {"tweak": 4,  "tstrong": 9},
     "svd":            {"tweak": 16, "tstrong": 21},
 }
 
-SCRIPTS = {"wan": "run_wan.py", "wan21": "run_wan21.py", "cog": "run_cog.py", "svd": "run_svd.py"}
+SCRIPTS = {"wan": "run_wan.py", "wan21": "run_wan21.py", "ti2v5b": "run_ti2v5b.py", "cog": "run_cog.py", "svd": "run_svd.py"}
 
 MODEL_IDS = {
     "wan": "lopho/Wan2.2-I2V-A14B-Diffusers_nf4",
-    "wan21": "Wan-AI/Wan2.1-T2V-1.3B",
+    "wan21": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "ti2v5b": "Wan-AI/Wan2.2-TI2V-5B-Diffusers",
     "cog": "THUDM/CogVideoX-5b-I2V",
     "svd": "stabilityai/stable-video-diffusion-img2vid-xt",
 }
@@ -64,7 +66,7 @@ EXTRA_PREFETCH_REPOS = {
     ],
 }
 
-CLIP_FRAMES = {"wan": 81, "wan21": 81, "cog": 49, "svd": 21}
+CLIP_FRAMES = {"wan": 81, "wan21": 81, "ti2v5b": 81, "cog": 49, "svd": 21}
 
 
 def write_example_stats(name: str, model: str, elapsed: float, rc: int, *,
@@ -102,6 +104,8 @@ def model_for(example_name: str):
         return "wan"
     if example_name.startswith("wan21_"):
         return "wan21"
+    if example_name.startswith("ti2v5b_"):
+        return "ti2v5b"
     if example_name.startswith("cutdrag_cog_"):
         return "cog"
     if example_name.startswith("cutdrag_svd_"):
@@ -253,9 +257,9 @@ def run_wan_batch(example_dirs: list[Path], args, python_exe: Path):
     return out
 
 
-def run_one(example_dir: Path, args, python_exe: Path):
+def run_one(example_dir: Path, args, python_exe: Path, forced_model: str | None = None):
     name = example_dir.name
-    model = model_for(name)
+    model = forced_model if forced_model else model_for(name)
     if model is None:
         print(f"[skip] {name}: unknown prefix")
         return None, 0.0, None
@@ -299,8 +303,9 @@ def run_one(example_dir: Path, args, python_exe: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Run TTM examples")
-    parser.add_argument("--model", choices=["wan", "wan21", "cog", "svd"], help="Limit to one model")
-    parser.add_argument("--skip", nargs="*", choices=["wan", "wan21", "cog", "svd"], default=["cog", "svd"], help="Skip these models (examples + downloads). Default skips cog and svd; pass --skip with no args to skip nothing.")
+    parser.add_argument("--model", choices=["wan", "wan21", "ti2v5b", "cog", "svd"], help="Limit to one model")
+    parser.add_argument("--force-model", choices=["wan", "wan21", "ti2v5b", "cog", "svd"], default=None, help="Force every example folder to use this model (overrides model_for routing).")
+    parser.add_argument("--skip", nargs="*", choices=["wan", "wan21", "ti2v5b", "cog", "svd"], default=["cog", "svd"], help="Skip these models (examples + downloads). Default skips cog and svd; pass --skip with no args to skip nothing.")
     parser.add_argument("--only", nargs="+", help="Only run examples whose name contains any of these substrings")
     parser.add_argument("--tweak-index", type=int, help="Override default tweak-index")
     parser.add_argument("--tstrong-index", type=int, help="Override default tstrong-index")
@@ -334,10 +339,15 @@ def main():
         print(f"Skipping {len(skipped)} example(s) before index {args.start_index}: {', '.join(skipped)}")
         examples = examples[args.start_index:]
 
+    def effective_model_for(name: str):
+        if args.force_model:
+            return args.force_model
+        return model_for(name)
+
     if not args.no_prefetch:
         needed_models = set()
         for ex in examples:
-            m = model_for(ex.name)
+            m = effective_model_for(ex.name)
             if m is None:
                 continue
             if args.model and m != args.model:
@@ -353,7 +363,7 @@ def main():
     total_start = time.perf_counter()
 
     wan_examples = [ex for ex in examples
-                    if model_for(ex.name) == "wan"
+                    if effective_model_for(ex.name) == "wan"
                     and (not args.model or args.model == "wan")
                     and "wan" not in args.skip]
     if wan_examples:
@@ -364,10 +374,10 @@ def main():
                 failures.append((name, rc))
 
     for ex in examples:
-        m = model_for(ex.name)
+        m = effective_model_for(ex.name)
         if m == "wan":
             continue
-        rc, elapsed, model = run_one(ex, args, python_exe)
+        rc, elapsed, model = run_one(ex, args, python_exe, forced_model=args.force_model)
         if rc is None:
             continue
         timings.append((ex.name, model, elapsed, rc))
